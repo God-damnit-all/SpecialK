@@ -1,4 +1,4 @@
-﻿// This is an open source non-commercial project. Dear PVS-Studio, please check it.
+// This is an open source non-commercial project. Dear PVS-Studio, please check it.
 // PVS-Studio Static Code Analyzer for C, C++, C#, and Java: https://pvs-studio.com
 /**
  * This file is part of Special K.
@@ -30,11 +30,7 @@
 #endif
 #define __SK_SUBSYSTEM__ L"   Xbox   "
 
-#include <wrl/client.h>
-#include <wrl/event.h>
-#include <wrl/wrappers/corewrappers.h>
 #include <windows.gaming.ui.h>
-#include <EventToken.h>
 
 ABI::Windows::Gaming::UI::IGameBarStatics* SK_GameBar_Statics = nullptr;
 
@@ -50,13 +46,13 @@ SK::Xbox::Init (void)
   HSTRING_HEADER   hNamespaceStringHeader;
   HSTRING          hNamespaceString;
 
-  if (SUCCEEDED (SK_WindowsCreateStringReference (wszNamespace,
-                    static_cast <UINT32> (wcslen (wszNamespace)),
-                                                   &hNamespaceStringHeader,
-                                                   &hNamespaceString)))
+  if (SUCCEEDED (WindowsCreateStringReference (wszNamespace,
+                 static_cast <UINT32> (wcslen (wszNamespace)),
+                                                &hNamespaceStringHeader,
+                                                &hNamespaceString)))
   {
     if (SUCCEEDED (
-      SK_RoGetActivationFactory (hNamespaceString, IID_IGameBarStatics,
+      RoGetActivationFactory (hNamespaceString, IID_IGameBarStatics,
                                           (void **)&SK_GameBar_Statics)))
     {
       // Keep COM loaded indefinitely, this object is persistent
@@ -65,134 +61,13 @@ SK::Xbox::Init (void)
   }
 }
 
-static boolean                visible              = false;
-static EventRegistrationToken visibility_event;
-static boolean                input_redirected     = false;
-static EventRegistrationToken input_event;
-static boolean                callbacks_registered = false;
-
 void
 SK::Xbox::Shutdown (void)
 {
   if (SK_GameBar_Statics != nullptr)
   {
-    SK_GameBar_Statics->remove_IsInputRedirectedChanged (input_event);
-    SK_GameBar_Statics->remove_VisibilityChanged        (visibility_event);
-
     std::exchange (SK_GameBar_Statics, nullptr)->Release ();
   }
-}
-
-boolean
-SK_Xbox_GetOverlayState_WithCaching (void)
-{
-  if (! SK_GameBar_Statics)
-    return false;
-
-  static bool   last_state = false;
-  static UINT64 last_frame =     0;
-
-  // Slow your horses! You can have a cached value instead.
-  if (last_frame + 10 > SK_GetFramesDrawn ())
-    return last_state;
-
-  SK_RunOnce (
-    SK_LOGi0 (L"SK_Xbox_GetOverlayState: Falling back to slow codepath!")
-  );
-
-  boolean redirected = false;
-
-  SK_GameBar_Statics->get_IsInputRedirected (&redirected);
-
-  // If redirected, but not visible, assume something is wrong and ignore.
-  if (redirected != false)
-    SK_GameBar_Statics->get_Visible         (&redirected);
-
-  last_state = redirected != false;
-  last_frame = SK_GetFramesDrawn ();
-
-  return redirected != false;
-}
-
-void
-SK_Xbox_RegisterCallbacks (void)
-{
-  if (! SK_GameBar_Statics || callbacks_registered)
-    return;
-
-  static int
-      failure_count =  0;
-  if (failure_count > 10)
-  {
-    SK_RunOnce (
-      SK_LOGi0 (L"SK_Xbox_RegisterCallbacks: too many failures, aborting!")
-    );
-    return;
-  }
-
-  static      std::mutex        registrar_mutex;
-  auto lock = std::scoped_lock (registrar_mutex);
-
-  if (callbacks_registered)
-    return;
-
-  SK_LOGi0 (
-    L"SK_Xbox_RegisterCallbacks: attempting registration (frame=%llu)",
-      SK_GetFramesDrawn ()
-  );
-
-  static auto visibility_callback =
-    Microsoft::WRL::Callback <ABI::Windows::Foundation::IEventHandler <IInspectable *>> (
-      [](IInspectable*, IInspectable*)
-      {
-        SK_GameBar_Statics->get_Visible (&visible);
-        return S_OK;
-      }
-    );
-
-  static auto input_callback =
-    Microsoft::WRL::Callback <ABI::Windows::Foundation::IEventHandler <IInspectable *>> (
-      [](IInspectable*, IInspectable*) {
-        SK_GameBar_Statics->get_IsInputRedirected (&input_redirected);
-        return S_OK;
-      }
-    );
-
-  SK_GameBar_Statics->get_Visible           (         &visible);
-  SK_GameBar_Statics->get_IsInputRedirected (&input_redirected);
-
-  if (input_event.value      == 0)
-    SK_GameBar_Statics->add_IsInputRedirectedChanged (input_callback.Get (),           &input_event);
-  if (visibility_event.value == 0)
-    SK_GameBar_Statics->add_VisibilityChanged        (visibility_callback.Get (), &visibility_event);
-
-  if (input_event     .value != 0 &&
-      visibility_event.value != 0)
-  {
-    callbacks_registered = true;
-
-    SK_LOGi0 (L"SK_Xbox_RegisterCallbacks: GameBar callbacks registered");
-  }
-
-  else
-    ++failure_count;
-}
-
-boolean
-SK_Xbox_GetOverlayState_UsingCallbacks (void)
-{
-  if (! SK_GameBar_Statics)
-    return false;
-
-  return
-    (visible && input_redirected);
-}
-
-bool
-SK_Xbox_IsGameBarInstalled (void)
-{
-  return
-    SK_IsProcessRunning (L"GameBar.exe");
 }
 
 bool
@@ -203,44 +78,32 @@ SK_Xbox_GetOverlayState (bool real)
 
   std::ignore = real;
 
-  static bool bHasGameBar =
-    SK_Xbox_IsGameBarInstalled ();
+  // This is a heavy API that requires IPC, ensure this is done at most
+  //   a single time per-frame...
+  static bool   last_state = false;
+  static UINT64 last_frame =     0;
 
-  if (! bHasGameBar)
-    return false;
+  // Actually, throttle it even more... once every 10 frames.
+  //  - It's not cheap, and a callback would be better.
+  if (last_frame > SK_GetFramesDrawn () - 10)
+    return last_state;
 
-  //
-  // Wait until the first frame has been rendered before registering
-  // Xbox/Game Bar callbacks. Some games create temporary startup or
-  // splash windows before the real render loop begins, and this
-  // function may be called during frame 0 before rendering is active.
-  // Registering callbacks that early has been observed to cause
-  // initialization ordering issues or freezes on some systems.
-  //
-  if (! callbacks_registered &&
-      SK_GetFramesDrawn () >= 600)
+  if (SK_GameBar_Statics != nullptr)
   {
-    SK_Xbox_RegisterCallbacks ();
+    boolean redirected = false;
+
+    // This whole thing is flaky, we should be using the callback to listen for activation instead...
+    SK_GameBar_Statics->get_IsInputRedirected (&redirected);
+
+    // If redirected, but not visible, assume something is wrong and ignore the status.
+    if (redirected != false)
+      SK_GameBar_Statics->get_Visible         (&redirected);
+
+    last_state = redirected != false;
+    last_frame = SK_GetFramesDrawn ();
+
+    return redirected != false;
   }
 
-  // nb: The above description is likely inaccurate, the actual source
-  //       of the problem appears to be failure to register callbacks on
-  //         systems with gamebar not installed.
-  //
-  //   However, there is no known harm in a 120 frame delay at the moment,
-  //     so might as well keep it as is.
-
-  boolean has_callbacks =
-    (visibility_event.value != 0);
-
-  //
-  // Fast Codepath: Does not query state unnecessarily.
-  //
-  if (has_callbacks)
-    return SK_Xbox_GetOverlayState_UsingCallbacks ();
-
-  //
-  // Slow Codepath: preserved in case the callback system breaks again.
-  //
-  return SK_Xbox_GetOverlayState_WithCaching ();
+  return false;
 }
