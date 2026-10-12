@@ -1,6 +1,6 @@
 name: Builds
 
-on: [push, pull_request]
+on: workflow_dispatch
 
 jobs:
   Build:
@@ -15,10 +15,10 @@ jobs:
       # msbuild SpecialK.sln -p:Configuration="${{ matrix.config }}" -p:Platform="${{ matrix.platform }}" -m
     
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - uses: SpecialKO/GA-setup-cpp-n20@master
-    - uses: microsoft/setup-msbuild@v2
+    - uses: microsoft/setup-msbuild@v3
     #  with:
     #    vs-version: '[17.6]'
 
@@ -30,9 +30,9 @@ jobs:
       run: |
         msbuild SpecialK.sln -p:Configuration="Release" -p:Platform="x64" -m
 
-    - name: Build the codebase (32-bit)
-      run: |
-        msbuild SpecialK.sln -p:Configuration="Release" -p:Platform="Win32" -m
+    #- name: Build the codebase (32-bit)
+    #  run: |
+    #    msbuild SpecialK.sln -p:Configuration="Release" -p:Platform="Win32" -m
 
     - name: Prepare environment variables for the artifact name
       run: |
@@ -41,14 +41,14 @@ jobs:
         "SK_VERSION=$Version" | Out-File -FilePath $env:GITHUB_ENV -Encoding UTF8 -Append
         "SHORT_SHA=$("${{ github.sha }}".SubString(0, 8))" | Out-File -FilePath $env:GITHUB_ENV -Encoding UTF8 -Append
 
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v7
       with:
         name: SpecialK_${{ env.SK_VERSION }}_${{ env.SHORT_SHA }}
         path: |
           ~\Documents\My Mods\SpecialK\*.dll
         if-no-files-found: error
 
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v7
       with:
         name: SpecialK_${{ env.SK_VERSION }}_${{ env.SHORT_SHA }}_debug_symbols
         path: |
