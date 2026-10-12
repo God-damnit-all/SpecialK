@@ -218,7 +218,7 @@ SK_Xbox_GetOverlayState (bool real)
   // initialization ordering issues or freezes on some systems.
   //
   if (! callbacks_registered &&
-      SK_GetFramesDrawn () >= 120)
+      SK_GetFramesDrawn () >= 1200)
   {
     SK_Xbox_RegisterCallbacks ();
   }
